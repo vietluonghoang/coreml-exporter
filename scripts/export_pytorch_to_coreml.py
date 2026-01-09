@@ -50,8 +50,8 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             model = loaded['model']
             print("✓ Found nn.Module in checkpoint['model']")
         
-        # Look for state_dict
-        for key in ['model', 'state_dict', 'net', 'backbone']:
+        # Look for state_dict (try all common variations)
+        for key in ['model_state_dict', 'model', 'state_dict', 'net', 'backbone']:
             if key in loaded and isinstance(loaded[key], dict) and state_dict is None:
                 state_dict = loaded[key]
                 print(f"Found state_dict in checkpoint['{key}']")
