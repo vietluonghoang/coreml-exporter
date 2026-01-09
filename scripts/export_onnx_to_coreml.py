@@ -48,13 +48,8 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     try:
         ml_model = ct.convert(
             onnx_path,
+            source="pytorch",
             convert_to="mlprogram",
-            inputs=[
-                ct.TensorType(
-                    name=input_name,
-                    shape=input_shape
-                )
-            ],
         )
         print("✓ Converted to ML Program (mlprogram)")
         
@@ -64,13 +59,8 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
         try:
             ml_model = ct.convert(
                 onnx_path,
+                source="pytorch",
                 convert_to="neuralnetwork",
-                inputs=[
-                    ct.TensorType(
-                        name=input_name,
-                        shape=input_shape
-                    )
-                ],
             )
             print("✓ Converted to Neural Network")
         except Exception as e2:
