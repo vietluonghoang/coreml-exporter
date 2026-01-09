@@ -23,7 +23,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
     """
-    # Load ONNX model for inspection only
+    # Load ONNX model for inspection
     print(f"Loading ONNX model from: {onnx_path}")
     onnx_model = onnx.load(onnx_path)
     print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
@@ -43,21 +43,28 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML
-    # IMPORTANT: Pass onnx_path as STRING, not model object
-    # source="pytorch" is required for coremltools to recognize the format
+    # Convert to CoreML - NO source parameter for ONNX files
+    # Let coremltools auto-detect from file extension
     print("Converting ONNX to CoreML...")
     try:
         ml_model = ct.convert(
-            onnx_path,  # Pass file path STRING, NOT model object
-            source="pytorch",  # Required parameter
+            onnx_path,
             convert_to="neuralnetwork"
         )
         print("✓ Converted to Neural Network successfully")
         
     except Exception as e:
-        print(f"Conversion failed: {str(e)}")
-        raise
+        print(f"Neural Network conversion failed: {str(e)[:200]}")
+        print("Retrying with mlprogram...")
+        try:
+            ml_model = ct.convert(
+                onnx_path,
+                convert_to="mlprogram"
+            )
+            print("✓ Converted to ML Program successfully")
+        except Exception as e2:
+            print(f"ML Program conversion also failed: {str(e2)[:200]}")
+            raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem
