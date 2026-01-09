@@ -81,12 +81,18 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     
     # Convert to CoreML
     print("Converting ONNX to CoreML...")
-    ml_model = ct.convert(
-        onnx_path,
-        source=source_framework,
-        convert_to="neuralnetwork",
-        minimum_deployment_target=ct.target.iOS14
-    )
+    try:
+        ml_model = ct.convert(
+            onnx_path,
+            convert_to="neuralnetwork"
+        )
+    except Exception as e:
+        print(f"Neuralnetwork conversion failed: {e}")
+        print("Retrying with mlprogram...")
+        ml_model = ct.convert(
+            onnx_path,
+            convert_to="mlprogram"
+        )
     
     # Determine output filename
     model_name = Path(onnx_path).stem
