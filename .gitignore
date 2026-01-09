@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -23,13 +26,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Virtual environments
-venv/
-ENV/
-env/
-.venv
-
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
@@ -37,15 +34,9 @@ env/
 *~
 .DS_Store
 
-# macOS
-.AppleDouble
-.LSOverride
-
-# Output files
-*.mlpackage/
+# Project specific
 output/
-*.zip
+onnx/  # Legacy ONNX files (no longer needed)
 
-# Temporary files
-.temp/
-tmp/
+# Git
+.git/

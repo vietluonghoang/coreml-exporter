@@ -1,11 +1,4 @@
-# Core dependencies
+# Core dependencies for PyTorch → CoreML
 numpy<2
 torch>=2.0.0
 coremltools>=8.3
-
-# For ONNX support (optional)
-onnx>=1.15.0
-onnx-simplifier>=0.4.36
-
-# For ONNX → PyTorch fallback (optional)
-onnx2pytorch>=0.1.0

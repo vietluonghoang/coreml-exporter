@@ -29,9 +29,9 @@ jobs:
           pip install -r requirements.txt
           echo "✓ Dependencies installed"
       
-      - name: Export ONNX to CoreML
+      - name: Export PyTorch to CoreML
         run: |
-          python scripts/export_onnx_to_coreml.py
+          python scripts/export_pytorch_to_coreml.py
       
       - name: Upload CoreML model as artifact
         if: success()
