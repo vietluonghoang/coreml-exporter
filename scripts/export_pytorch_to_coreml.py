@@ -71,12 +71,28 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
                 state_dict = {k.replace('backbone.', ''): v for k, v in state_dict.items()}
             
             # Create MobileNetV3Small with random initialization
-            model = mobilenet_v3_small(weights=None)
+            model = mobilenet_v3_small(weights=None, num_classes=1000)  # Default num_classes
             print("✓ Created MobileNetV3Small architecture")
             
-            # Load trained weights
-            model.load_state_dict(state_dict)
-            print("✓ Loaded weights from checkpoint")
+            # Try to load full state_dict
+            try:
+                model.load_state_dict(state_dict)
+                print("✓ Loaded full state_dict")
+            except RuntimeError as e:
+                print(f"⚠ Full state_dict loading failed, attempting backbone-only load...")
+                
+                # Load only backbone (features) part - ignore custom classifier
+                backbone_dict = {k.replace('features.', ''): v 
+                                 for k, v in state_dict.items() 
+                                 if k.startswith('features.')}
+                
+                if backbone_dict:
+                    model.features.load_state_dict(backbone_dict, strict=False)
+                    print("✓ Loaded backbone weights (features) only")
+                    print("⚠ Note: Classifier head was custom, using default MobileNetV3Small classifier")
+                else:
+                    print("✗ Could not find 'features' in state_dict")
+                    raise e
             
         except ImportError:
             print("✗ torchvision not installed. Install: pip install torchvision")
