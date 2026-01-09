@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert ONNX model to CoreML format
+MobileNetV3Small: Input shape (1, 3, 128, 128)
 """
 
 import os
@@ -9,46 +10,6 @@ from pathlib import Path
 
 import coremltools as ct
 import onnx
-import numpy as np
-
-
-def get_input_shapes(onnx_path: str) -> dict:
-    """
-    Extract input shapes from ONNX model.
-    """
-    onnx_model = onnx.load(onnx_path)
-    input_shapes = {}
-    
-    for input_info in onnx_model.graph.input:
-        shape = []
-        for dim in input_info.type.tensor_type.shape.dim:
-            if dim.dim_value == 0:
-                shape.append(1)  # Default to 1 if dynamic
-            else:
-                shape.append(dim.dim_value)
-        input_shapes[input_info.name] = shape
-    
-    return input_shapes
-
-
-def detect_source_framework(onnx_path: str) -> str:
-    """
-    Detect the source framework from ONNX model.
-    Defaults to pytorch for most models.
-    """
-    onnx_model = onnx.load(onnx_path)
-    producer_name = onnx_model.producer_name.lower()
-    
-    print(f"ONNX Producer: {producer_name}")
-    
-    if "pytorch" in producer_name:
-        return "pytorch"
-    elif "tensorflow" in producer_name:
-        return "tensorflow"
-    else:
-        # Default to pytorch
-        print("Defaulting to pytorch source framework")
-        return "pytorch"
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
@@ -68,13 +29,17 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     onnx.checker.check_model(onnx_model)
     print("✓ ONNX model validation passed")
     
-    # Get input shapes
-    input_shapes = get_input_shapes(onnx_path)
-    print(f"Input shapes: {input_shapes}")
+    # Get model info
+    producer_name = onnx_model.producer_name
+    print(f"ONNX Producer: {producer_name}")
     
-    # Detect source framework
-    source_framework = detect_source_framework(onnx_path)
-    print(f"Source framework detected: {source_framework}")
+    # Extract input info
+    input_name = onnx_model.graph.input[0].name
+    input_shape = [
+        dim.dim_value
+        for dim in onnx_model.graph.input[0].type.tensor_type.shape.dim
+    ]
+    print(f"Input: {input_name}, Shape: {input_shape}")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -83,16 +48,37 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     print("Converting ONNX to CoreML...")
     try:
         ml_model = ct.convert(
-            onnx_path,
-            convert_to="neuralnetwork"
+            onnx_model,
+            source="pytorch",
+            convert_to="mlprogram",
+            inputs=[
+                ct.TensorType(
+                    name=input_name,
+                    shape=input_shape
+                )
+            ],
         )
+        print("✓ Converted to ML Program (mlprogram)")
+        
     except Exception as e:
-        print(f"Neuralnetwork conversion failed: {e}")
-        print("Retrying with mlprogram...")
-        ml_model = ct.convert(
-            onnx_path,
-            convert_to="mlprogram"
-        )
+        print(f"ML Program conversion failed: {e}")
+        print("Retrying with Neural Network...")
+        try:
+            ml_model = ct.convert(
+                onnx_model,
+                source="pytorch",
+                convert_to="neuralnetwork",
+                inputs=[
+                    ct.TensorType(
+                        name=input_name,
+                        shape=input_shape
+                    )
+                ],
+            )
+            print("✓ Converted to Neural Network")
+        except Exception as e2:
+            print(f"Neural Network conversion also failed: {e2}")
+            raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem
@@ -102,6 +88,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     print(f"Saving CoreML model to: {output_path}")
     ml_model.save(output_path)
     print(f"✓ CoreML model saved successfully")
+    print(f"✓ Output: {output_path}")
     
     return output_path
 
@@ -117,12 +104,11 @@ def main():
         sys.exit(1)
     
     onnx_model_path = str(onnx_files[0])
-    print(f"Found ONNX model: {onnx_model_path}")
+    print(f"Found ONNX model: {onnx_model_path}\n")
     
     try:
-        output_path = export_onnx_to_coreml(onnx_model_path)
-        print(f"\n✓ Conversion completed successfully!")
-        print(f"Output: {output_path}")
+        export_onnx_to_coreml(onnx_model_path)
+        print("\n✓ Conversion completed successfully!")
     except Exception as e:
         print(f"\n✗ Conversion failed: {str(e)}")
         sys.exit(1)

@@ -1,6 +1,4 @@
-coremltools>=7.1
-onnx>=1.14.0
-onnxruntime>=1.16.0
+coremltools==7.2
+onnx==1.15.0
 numpy>=1.21.0
-protobuf>=4.0.0
 torch>=2.0.0
