@@ -86,21 +86,38 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     
     # Step 2: Convert to CoreML using coremltools 8.3+
     print("\nConverting ONNX to CoreML using coremltools 8.3+...")
+    
+    ml_model = None
+    
+    # Try Method 1: mlprogram format (modern, Neural Networks 5)
+    print("Attempting conversion with mlprogram format...")
     try:
         ml_model = ct.convert(
             onnx_model,
-            convert_to="mlprogram",  # mlprogram = Neural Networks 5 (more modern)
-            minimum_ios_deployment_target="14"
+            convert_to="mlprogram"
         )
-        print("✓ Converted successfully with coremltools")
+        print("✓ Converted successfully with mlprogram format")
         
     except Exception as e:
-        print(f"✗ Conversion failed: {str(e)}")
-        print("\nTroubleshooting:")
-        print("1. Model may contain unsupported operators")
-        print("2. Try 'neuralnetwork' format instead of 'mlprogram'")
-        print("3. Export PyTorch model to .pt and convert directly")
-        raise
+        print(f"⚠ mlprogram conversion failed: {str(e)}")
+        print("Attempting fallback to neuralnetwork format...")
+    
+    # Try Method 2: neuralnetwork format (legacy but more compatible)
+    if ml_model is None:
+        try:
+            ml_model = ct.convert(
+                onnx_model,
+                convert_to="neuralnetwork"
+            )
+            print("✓ Converted successfully with neuralnetwork format")
+            
+        except Exception as e:
+            print(f"✗ Both conversion methods failed: {str(e)}")
+            print("\nTroubleshooting:")
+            print("1. Model may contain unsupported operators")
+            print("2. Try exporting PyTorch model to .pt format")
+            print("3. Check if onnx-simplifier can reduce model complexity")
+            raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem

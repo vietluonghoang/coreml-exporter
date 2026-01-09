@@ -1,4 +1,4 @@
-onnx>=1.14.0,<1.16.0
+onnx>=1.15.0
 numpy<2
 torch>=2.0.0
 coremltools>=8.3
