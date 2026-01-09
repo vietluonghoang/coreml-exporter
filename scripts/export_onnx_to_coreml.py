@@ -23,6 +23,13 @@ except ImportError:
 
 import coremltools as ct
 
+# Try to import coremltools ONNX converter directly
+try:
+    from coremltools.converters import onnx as ct_onnx
+    CT_ONNX_CONVERTER_AVAILABLE = True
+except ImportError:
+    CT_ONNX_CONVERTER_AVAILABLE = False
+
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
@@ -71,40 +78,72 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     os.makedirs(output_dir, exist_ok=True)
     
     # Convert to CoreML
-    # CRITICAL: Pass file path string, not model object
-    # Let coremltools 8.3+ handle ONNX detection internally (no segfault)
     print("\nConverting ONNX to CoreML using coremltools...")
     
     ml_model = None
     
-    # Method 1: mlprogram (modern)
-    print("Method 1: Attempting mlprogram format...")
-    try:
-        # Pass file path directly - coremltools will detect and load internally
-        ml_model = ct.convert(
-            onnx_path,
-            convert_to="mlprogram"
-        )
-        print("✓ Converted successfully with mlprogram")
-        
-    except Exception as e:
-        print(f"⚠ mlprogram failed: {str(e)[:100]}")
+    # Method 1: Use coremltools.converters.onnx directly (specialized ONNX converter)
+    if CT_ONNX_CONVERTER_AVAILABLE and ONNX_AVAILABLE:
+        print("Method 1: Using coremltools.converters.onnx (specialized)...")
+        try:
+            # Load ONNX model without validation
+            onnx_model = onnx.load(onnx_path)
+            
+            # Use specialized ONNX converter
+            ml_model = ct_onnx.convert(onnx_model)
+            print("✓ Converted successfully with ct.converters.onnx")
+            
+        except Exception as e:
+            print(f"⚠ ct.converters.onnx failed: {str(e)[:100]}")
+            ml_model = None
     
-    # Method 2: neuralnetwork (fallback)
+    # Method 2: Try mlprogram with source="onnx" (if supported)
     if ml_model is None:
-        print("Method 2: Attempting neuralnetwork format...")
+        print("Method 2: Attempting mlprogram with explicit source...")
         try:
             ml_model = ct.convert(
                 onnx_path,
-                convert_to="neuralnetwork"
+                convert_to="mlprogram",
+                source="onnx"
+            )
+            print("✓ Converted successfully with mlprogram")
+            
+        except Exception as e:
+            print(f"⚠ mlprogram with source='onnx' failed: {str(e)[:100]}")
+    
+    # Method 3: neuralnetwork format (fallback)
+    if ml_model is None:
+        print("Method 3: Attempting neuralnetwork format...")
+        try:
+            ml_model = ct.convert(
+                onnx_path,
+                convert_to="neuralnetwork",
+                source="onnx"
             )
             print("✓ Converted successfully with neuralnetwork")
             
         except Exception as e:
-            print(f"✗ neuralnetwork also failed: {str(e)[:100]}")
-            print("\nNote: This ONNX IR v10 model may need:")
-            print("1. Export from PyTorch to .pt format instead")
-            print("2. Operator optimization via onnx-simplifier")
+            print(f"⚠ neuralnetwork also failed: {str(e)[:100]}")
+    
+    # Method 4: Last resort - load ONNX and pass object to ct.convert
+    if ml_model is None and ONNX_AVAILABLE:
+        print("Method 4: Direct model object conversion...")
+        try:
+            onnx_model = onnx.load(onnx_path)
+            
+            # Try passing model object without source
+            ml_model = ct.convert(
+                onnx_model,
+                convert_to="neuralnetwork"
+            )
+            print("✓ Converted successfully with model object")
+            
+        except Exception as e:
+            print(f"✗ All conversion methods failed: {str(e)[:150]}")
+            print("\nThis ONNX IR v10 + MobileNetV3 model requires PyTorch export:")
+            print("1. Export original PyTorch model to .pt format")
+            print("2. Place .pt file in project root")
+            print("3. Run: python scripts/export_pytorch_to_coreml.py")
             raise
     
     # Determine output filename
