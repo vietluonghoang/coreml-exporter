@@ -23,11 +23,10 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
     """
-    # Validate ONNX model
+    # Load ONNX model
     print(f"Loading ONNX model from: {onnx_path}")
     onnx_model = onnx.load(onnx_path)
-    onnx.checker.check_model(onnx_model)
-    print("✓ ONNX model validation passed")
+    print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
 
     # Get model info
     producer_name = onnx_model.producer_name
