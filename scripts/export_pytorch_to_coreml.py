@@ -31,15 +31,66 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     if not os.path.exists(pt_path):
         raise FileNotFoundError(f"PyTorch file not found: {pt_path}")
     
-    model = torch.load(pt_path, map_location="cpu")
-    print(f"✓ PyTorch model loaded")
+    loaded = torch.load(pt_path, map_location="cpu")
+    print(f"✓ Loaded checkpoint (type: {type(loaded).__name__})")
+    
+    model = None
+    state_dict = None
+    
+    # Extract model or state_dict from checkpoint
+    if isinstance(loaded, nn.Module):
+        model = loaded
+        print("✓ Direct nn.Module loaded")
+    
+    elif isinstance(loaded, dict):
+        print(f"Checkpoint keys: {list(loaded.keys())}")
+        
+        # Try to find model object
+        if 'model' in loaded and isinstance(loaded['model'], nn.Module):
+            model = loaded['model']
+            print("✓ Found nn.Module in checkpoint['model']")
+        
+        # Look for state_dict
+        for key in ['model', 'state_dict', 'net', 'backbone']:
+            if key in loaded and isinstance(loaded[key], dict) and state_dict is None:
+                state_dict = loaded[key]
+                print(f"Found state_dict in checkpoint['{key}']")
+                break
+    
+    # If only state_dict available, rebuild MobileNetV3Small architecture
+    if model is None and state_dict is not None:
+        print("\nRebuilding MobileNetV3Small architecture from state_dict...")
+        try:
+            from torchvision.models import mobilenet_v3_small
+            
+            # Create MobileNetV3Small with random initialization
+            model = mobilenet_v3_small(weights=None)
+            print("✓ Created MobileNetV3Small architecture")
+            
+            # Load trained weights
+            model.load_state_dict(state_dict)
+            print("✓ Loaded weights from checkpoint")
+            
+        except ImportError:
+            print("✗ torchvision not installed. Install: pip install torchvision")
+            raise
+        except Exception as e:
+            print(f"✗ Failed to load weights: {e}")
+            raise
+    
+    if model is None:
+        print("\n✗ Could not load model")
+        raise ValueError(
+            "Checkpoint format not supported.\n"
+            "Need one of:\n"
+            "  1. Direct nn.Module object\n"
+            "  2. Dict with 'model' key containing nn.Module\n"
+            "  3. Dict with 'state_dict' key (will rebuild MobileNetV3Small)"
+        )
     
     # Ensure model is in eval mode
-    if isinstance(model, nn.Module):
-        model.eval()
-        print(f"Model type: {type(model).__name__}")
-    else:
-        print(f"Model type: {type(model)}")
+    model.eval()
+    print(f"✓ Model ready for conversion")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
