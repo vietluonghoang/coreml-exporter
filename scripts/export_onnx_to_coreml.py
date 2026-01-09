@@ -9,12 +9,13 @@ import sys
 from pathlib import Path
 
 import coremltools as ct
+from coremltools.converters import onnx as onnx_converter
 import onnx
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
-    Convert ONNX model to CoreML format.
+    Convert ONNX model to CoreML format using dedicated ONNX converter.
     
     Args:
         onnx_path: Path to the ONNX model file
@@ -34,42 +35,43 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     
     # Extract input info
     input_name = onnx_model.graph.input[0].name
-    input_shape = [
+    input_shape = tuple(
         dim.dim_value
         for dim in onnx_model.graph.input[0].type.tensor_type.shape.dim
-    ]
+    )
     print(f"Input: {input_name}, Shape: {input_shape}")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML
+    # Convert to CoreML using ONNX converter
     print("Converting ONNX to CoreML...")
     try:
-        ml_model = ct.convert(
+        # Use dedicated ONNX converter - handles IR version 10 better
+        ml_model = onnx_converter.convert(
             onnx_path,
-            source="pytorch",
-            convert_to="mlprogram",
+            mode="classifier",  # or "raw"
+            image_input_names=None,
+            minimum_ios_deployment_target="13",
         )
-        print("✓ Converted to ML Program (mlprogram)")
+        print("✓ Converted successfully with onnx converter")
         
     except Exception as e:
-        print(f"ML Program conversion failed: {e}")
-        print("Retrying with Neural Network...")
+        print(f"ONNX converter failed: {str(e)[:200]}")
+        print("Trying unified API fallback...")
         try:
             ml_model = ct.convert(
                 onnx_path,
-                source="pytorch",
                 convert_to="neuralnetwork",
             )
             print("✓ Converted to Neural Network")
         except Exception as e2:
-            print(f"Neural Network conversion also failed: {e2}")
+            print(f"Unified API also failed: {str(e2)[:200]}")
             raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem
-    output_path = os.path.join(output_dir, f"{model_name}.mlpackage")
+    output_path = os.path.join(output_dir, f"{model_name}.mlmodel")
     
     # Save CoreML model
     print(f"Saving CoreML model to: {output_path}")
