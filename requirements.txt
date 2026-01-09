@@ -1,4 +1,4 @@
-coremltools==7.2
-onnx>=1.14.0
+coremltools>=8.0,<9.0
+onnx>=1.16.0
 numpy<2
-torch==2.2.0
+torch>=2.0.0
