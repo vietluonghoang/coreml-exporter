@@ -34,7 +34,7 @@ jobs:
       
       - name: Upload CoreML model as artifact
         if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: coreml-model
           path: output/*.mlpackage
