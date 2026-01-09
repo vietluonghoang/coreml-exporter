@@ -2,28 +2,36 @@
 """
 Convert ONNX model to CoreML format
 MobileNetV3Small: Input shape (1, 3, 128, 128)
-Uses coremltools 8.3+ which supports ONNX IR v10
-Strategy: Optimize ONNX model with onnx-simplifier first
+
+CRITICAL: ONNX IR v10 + MobileNetV3 HardSwish causes segfault in coremltools
+Strategy: Skip ONNX validation, use low-level coremltools API directly
 """
 
 import os
 import sys
 from pathlib import Path
+import warnings
 
-import onnx
-import coremltools as ct
+# Suppress validation warnings
+warnings.filterwarnings("ignore")
 
 try:
-    from onnxsim import simplify
-    ONNX_SIMPLIFIER_AVAILABLE = True
+    import onnx
+    ONNX_AVAILABLE = True
 except ImportError:
-    ONNX_SIMPLIFIER_AVAILABLE = False
-    print("Warning: onnx-simplifier not available, skipping optimization")
+    ONNX_AVAILABLE = False
+
+import coremltools as ct
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
-    Convert ONNX model to CoreML format using coremltools 8.3+
+    Convert ONNX model to CoreML format using coremltools.
+    
+    CRITICAL FIX for ONNX IR v10 + MobileNetV3 segfault:
+    - Load ONNX WITHOUT validation (skip onnx.checker)
+    - Pass file path directly to ct.convert (not model object)
+    - Let coremltools handle format detection
     
     Args:
         onnx_path: Path to the ONNX model file
@@ -31,92 +39,72 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
         
     Returns:
         Path to the generated CoreML model
-        
-    Strategy:
-    1. Load and validate ONNX model (IR v10 support)
-    2. Optimize with onnx-simplifier (reduce complexity, improve conversion)
-    3. Convert directly with coremltools 8.3+ (native ONNX IR v10 support)
     """
-    # Load ONNX model
+    # Verify file exists
     print(f"Loading ONNX model from: {onnx_path}")
     if not os.path.exists(onnx_path):
         raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
     
-    onnx_model = onnx.load(onnx_path)
-    print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
-    
-    # Validate model structure
-    try:
-        onnx.checker.check_model(onnx_model)
-        print("✓ ONNX model validation passed")
-    except onnx.checker.ValidationError as e:
-        print(f"⚠ ONNX model validation warning: {e}")
-    
-    # Get model info
-    producer_name = onnx_model.producer_name or "Unknown"
-    print(f"ONNX Producer: {producer_name}")
-    
-    # Extract input info
-    try:
-        input_name = onnx_model.graph.input[0].name
-        input_shape = tuple(
-            dim.dim_value
-            for dim in onnx_model.graph.input[0].type.tensor_type.shape.dim
-        )
-        print(f"Input: {input_name}, Shape: {input_shape}")
-    except (IndexError, AttributeError) as e:
-        print(f"Warning: Could not extract input info: {e}")
-    
-    # Step 1: Optimize ONNX model with onnx-simplifier
-    print("\nOptimizing ONNX model...")
-    if ONNX_SIMPLIFIER_AVAILABLE:
+    # Load ONNX for info only (NO validation to avoid IR v10 crash)
+    if ONNX_AVAILABLE:
         try:
-            onnx_model, check_ok = simplify(onnx_model)
-            if check_ok:
-                print("✓ ONNX model optimized successfully")
-            else:
-                print("⚠ ONNX simplification succeeded but model check failed (continuing anyway)")
+            onnx_model = onnx.load(onnx_path)
+            print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
+            
+            producer_name = onnx_model.producer_name or "Unknown"
+            print(f"ONNX Producer: {producer_name}")
+            
+            # Extract input info (no validation)
+            try:
+                input_name = onnx_model.graph.input[0].name
+                input_shape = tuple(
+                    dim.dim_value
+                    for dim in onnx_model.graph.input[0].type.tensor_type.shape.dim
+                )
+                print(f"Input: {input_name}, Shape: {input_shape}")
+            except (IndexError, AttributeError):
+                pass
         except Exception as e:
-            print(f"⚠ ONNX simplification failed: {e} (continuing without optimization)")
-    else:
-        print("⚠ onnx-simplifier not available, skipping optimization")
+            print(f"⚠ ONNX info loading skipped: {e}")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Step 2: Convert to CoreML using coremltools 8.3+
-    print("\nConverting ONNX to CoreML using coremltools 8.3+...")
+    # Convert to CoreML
+    # CRITICAL: Pass file path string, not model object
+    # Let coremltools 8.3+ handle ONNX detection internally (no segfault)
+    print("\nConverting ONNX to CoreML using coremltools...")
     
     ml_model = None
     
-    # Try Method 1: mlprogram format (modern, Neural Networks 5)
-    print("Attempting conversion with mlprogram format...")
+    # Method 1: mlprogram (modern)
+    print("Method 1: Attempting mlprogram format...")
     try:
+        # Pass file path directly - coremltools will detect and load internally
         ml_model = ct.convert(
-            onnx_model,
+            onnx_path,
             convert_to="mlprogram"
         )
-        print("✓ Converted successfully with mlprogram format")
+        print("✓ Converted successfully with mlprogram")
         
     except Exception as e:
-        print(f"⚠ mlprogram conversion failed: {str(e)}")
-        print("Attempting fallback to neuralnetwork format...")
+        print(f"⚠ mlprogram failed: {str(e)[:100]}")
     
-    # Try Method 2: neuralnetwork format (legacy but more compatible)
+    # Method 2: neuralnetwork (fallback)
     if ml_model is None:
+        print("Method 2: Attempting neuralnetwork format...")
         try:
             ml_model = ct.convert(
-                onnx_model,
+                onnx_path,
                 convert_to="neuralnetwork"
             )
-            print("✓ Converted successfully with neuralnetwork format")
+            print("✓ Converted successfully with neuralnetwork")
             
         except Exception as e:
-            print(f"✗ Both conversion methods failed: {str(e)}")
-            print("\nTroubleshooting:")
-            print("1. Model may contain unsupported operators")
-            print("2. Try exporting PyTorch model to .pt format")
-            print("3. Check if onnx-simplifier can reduce model complexity")
+            print(f"✗ neuralnetwork also failed: {str(e)[:100]}")
+            print("\nNote: This ONNX IR v10 model may need:")
+            print("1. Export from PyTorch to .pt format instead")
+            print("2. Operator optimization via onnx-simplifier")
             raise
     
     # Determine output filename
