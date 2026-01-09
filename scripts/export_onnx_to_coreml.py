@@ -9,13 +9,12 @@ import sys
 from pathlib import Path
 
 import coremltools as ct
-from coremltools.converters import onnx as onnx_converter
 import onnx
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
-    Convert ONNX model to CoreML format using dedicated ONNX converter.
+    Convert ONNX model to CoreML format.
     
     Args:
         onnx_path: Path to the ONNX model file
@@ -24,7 +23,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
     """
-    # Load ONNX model for inspection
+    # Load ONNX model for inspection only
     print(f"Loading ONNX model from: {onnx_path}")
     onnx_model = onnx.load(onnx_path)
     print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
@@ -44,30 +43,21 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML using ONNX converter
+    # Convert to CoreML
+    # IMPORTANT: Pass onnx_path as STRING, not model object
+    # source="pytorch" is required for coremltools to recognize the format
     print("Converting ONNX to CoreML...")
     try:
-        # Use dedicated ONNX converter - handles IR version 10 better
-        ml_model = onnx_converter.convert(
-            onnx_path,
-            mode="classifier",  # or "raw"
-            image_input_names=None,
-            minimum_ios_deployment_target="13",
+        ml_model = ct.convert(
+            onnx_path,  # Pass file path STRING, NOT model object
+            source="pytorch",  # Required parameter
+            convert_to="neuralnetwork"
         )
-        print("✓ Converted successfully with onnx converter")
+        print("✓ Converted to Neural Network successfully")
         
     except Exception as e:
-        print(f"ONNX converter failed: {str(e)[:200]}")
-        print("Trying unified API fallback...")
-        try:
-            ml_model = ct.convert(
-                onnx_path,
-                convert_to="neuralnetwork",
-            )
-            print("✓ Converted to Neural Network")
-        except Exception as e2:
-            print(f"Unified API also failed: {str(e2)[:200]}")
-            raise
+        print(f"Conversion failed: {str(e)}")
+        raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem
