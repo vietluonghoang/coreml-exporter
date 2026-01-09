@@ -1,0 +1,51 @@
+name: Export ONNX to CoreML
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'onnx/**'
+      - 'scripts/**'
+      - '.github/workflows/export-to-coreml.yml'
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install coremltools onnx numpy
+      
+      - name: Export ONNX to CoreML
+        run: |
+          python scripts/export_onnx_to_coreml.py
+      
+      - name: Upload CoreML model as artifact
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: coreml-model
+          path: output/*.mlpackage
+          retention-days: 30
+      
+      - name: Create Release
+        if: success() && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: output/*.mlpackage
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
