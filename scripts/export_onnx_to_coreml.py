@@ -9,6 +9,26 @@ from pathlib import Path
 
 import coremltools as ct
 import onnx
+import numpy as np
+
+
+def get_input_shapes(onnx_path: str) -> dict:
+    """
+    Extract input shapes from ONNX model.
+    """
+    onnx_model = onnx.load(onnx_path)
+    input_shapes = {}
+    
+    for input_info in onnx_model.graph.input:
+        shape = []
+        for dim in input_info.type.tensor_type.shape.dim:
+            if dim.dim_value == 0:
+                shape.append(1)  # Default to 1 if dynamic
+            else:
+                shape.append(dim.dim_value)
+        input_shapes[input_info.name] = shape
+    
+    return input_shapes
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
@@ -28,12 +48,20 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     onnx.checker.check_model(onnx_model)
     print("✓ ONNX model validation passed")
     
+    # Get input shapes
+    input_shapes = get_input_shapes(onnx_path)
+    print(f"Input shapes: {input_shapes}")
+    
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
     # Convert to CoreML
     print("Converting ONNX to CoreML...")
-    ml_model = ct.convert(onnx_path, convert_to="mlprogram")
+    ml_model = ct.convert(
+        onnx_path,
+        convert_to="mlprogram",
+        minimum_deployment_target=ct.target.iOS16
+    )
     
     # Determine output filename
     model_name = Path(onnx_path).stem
