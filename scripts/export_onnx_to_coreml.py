@@ -45,10 +45,13 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     os.makedirs(output_dir, exist_ok=True)
     
     # Convert to CoreML
-    # coremltools 8.0+ auto-detects ONNX format
+    # coremltools 8.0+ requires source parameter for ONNX
     print("Converting ONNX to CoreML...")
     try:
-        ml_model = ct.convert(onnx_path)
+        ml_model = ct.convert(
+            onnx_path,
+            source="pytorch"
+        )
         print("✓ Converted successfully")
         
     except Exception as e:
