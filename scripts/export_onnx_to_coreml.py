@@ -2,20 +2,20 @@
 """
 Convert ONNX model to CoreML format
 MobileNetV3Small: Input shape (1, 3, 128, 128)
-Uses coremltools 8.0+ which supports ONNX IR v10
+Uses onnx-coreml package (dedicated ONNX converter)
 """
 
 import os
 import sys
 from pathlib import Path
 
-import coremltools as ct
+from onnx_coreml import convert
 import onnx
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
-    Convert ONNX model to CoreML format.
+    Convert ONNX model to CoreML format using onnx-coreml.
     
     Args:
         onnx_path: Path to the ONNX model file
@@ -24,7 +24,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
     """
-    # Load ONNX model for inspection
+    # Load ONNX model
     print(f"Loading ONNX model from: {onnx_path}")
     onnx_model = onnx.load(onnx_path)
     print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
@@ -44,14 +44,10 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML
-    # coremltools 8.0+ requires source parameter for ONNX
-    print("Converting ONNX to CoreML...")
+    # Convert to CoreML using onnx-coreml (stable, dedicated package)
+    print("Converting ONNX to CoreML using onnx-coreml...")
     try:
-        ml_model = ct.convert(
-            onnx_path,
-            source="pytorch"
-        )
+        ml_model = convert(onnx_model)
         print("✓ Converted successfully")
         
     except Exception as e:
@@ -60,7 +56,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     
     # Determine output filename
     model_name = Path(onnx_path).stem
-    output_path = os.path.join(output_dir, f"{model_name}.mlpackage")
+    output_path = os.path.join(output_dir, f"{model_name}.mlmodel")
     
     # Save CoreML model
     print(f"Saving CoreML model to: {output_path}")
