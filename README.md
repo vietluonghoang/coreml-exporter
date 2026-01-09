@@ -1,6 +1,6 @@
 # CoreML Exporter
 
-Automated conversion of ONNX models to CoreML format using GitHub Actions on macOS.
+Automated conversion of ONNX models (MobileNetV3Small) to CoreML format using GitHub Actions on macOS.
 
 ## Features
 

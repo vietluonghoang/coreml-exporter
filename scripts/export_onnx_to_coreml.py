@@ -31,6 +31,26 @@ def get_input_shapes(onnx_path: str) -> dict:
     return input_shapes
 
 
+def detect_source_framework(onnx_path: str) -> str:
+    """
+    Detect the source framework from ONNX model.
+    Defaults to pytorch for most models.
+    """
+    onnx_model = onnx.load(onnx_path)
+    producer_name = onnx_model.producer_name.lower()
+    
+    print(f"ONNX Producer: {producer_name}")
+    
+    if "pytorch" in producer_name:
+        return "pytorch"
+    elif "tensorflow" in producer_name:
+        return "tensorflow"
+    else:
+        # Default to pytorch
+        print("Defaulting to pytorch source framework")
+        return "pytorch"
+
+
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
     Convert ONNX model to CoreML format.
@@ -52,6 +72,10 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     input_shapes = get_input_shapes(onnx_path)
     print(f"Input shapes: {input_shapes}")
     
+    # Detect source framework
+    source_framework = detect_source_framework(onnx_path)
+    print(f"Source framework detected: {source_framework}")
+    
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
@@ -59,8 +83,9 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     print("Converting ONNX to CoreML...")
     ml_model = ct.convert(
         onnx_path,
-        convert_to="mlprogram",
-        minimum_deployment_target=ct.target.iOS16
+        source=source_framework,
+        convert_to="neuralnetwork",
+        minimum_deployment_target=ct.target.iOS14
     )
     
     # Determine output filename
