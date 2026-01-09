@@ -10,6 +10,7 @@ from pathlib import Path
 
 import coremltools as ct
 import onnx
+from onnx import version_converter
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
@@ -23,10 +24,19 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
     """
-    # Load ONNX model for inspection
+    # Load ONNX model
     print(f"Loading ONNX model from: {onnx_path}")
     onnx_model = onnx.load(onnx_path)
     print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
+    
+    # Downgrade IR version if needed (coremltools 7.2 supports up to IR v9)
+    if onnx_model.ir_version > 9:
+        print(f"⚠ Downgrading ONNX IR from v{onnx_model.ir_version} to v9 (coremltools 7.2 compatibility)")
+        onnx_model = version_converter.convert_version(onnx_model, 9)
+        temp_onnx_path = os.path.join(output_dir, "model_ir9.onnx")
+        onnx.save(onnx_model, temp_onnx_path)
+        onnx_path = temp_onnx_path
+        print(f"✓ Downgraded to IR v9")
     
     # Get model info
     producer_name = onnx_model.producer_name
@@ -43,12 +53,12 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML - NO source parameter for ONNX files
-    # Let coremltools auto-detect from file extension
+    # Convert to CoreML with source parameter
     print("Converting ONNX to CoreML...")
     try:
         ml_model = ct.convert(
             onnx_path,
+            source="pytorch",
             convert_to="neuralnetwork"
         )
         print("✓ Converted to Neural Network successfully")
@@ -59,6 +69,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
         try:
             ml_model = ct.convert(
                 onnx_path,
+                source="pytorch",
                 convert_to="mlprogram"
             )
             print("✓ Converted to ML Program successfully")
@@ -67,7 +78,7 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
             raise
     
     # Determine output filename
-    model_name = Path(onnx_path).stem
+    model_name = Path(onnx_path).stem.replace("_ir9", "")
     output_path = os.path.join(output_dir, f"{model_name}.mlmodel")
     
     # Save CoreML model
