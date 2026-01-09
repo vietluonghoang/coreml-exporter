@@ -63,6 +63,13 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
         try:
             from torchvision.models import mobilenet_v3_small
             
+            # Check if state_dict has 'backbone.' prefix (custom wrapper)
+            has_backbone_prefix = any(k.startswith('backbone.') for k in state_dict.keys())
+            if has_backbone_prefix:
+                print("Detected 'backbone.' prefix in state_dict, stripping...")
+                # Remove 'backbone.' prefix to match MobileNetV3Small keys
+                state_dict = {k.replace('backbone.', ''): v for k, v in state_dict.items()}
+            
             # Create MobileNetV3Small with random initialization
             model = mobilenet_v3_small(weights=None)
             print("✓ Created MobileNetV3Small architecture")
