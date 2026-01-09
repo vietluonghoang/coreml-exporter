@@ -2,8 +2,8 @@
 """
 Convert ONNX model to CoreML format
 MobileNetV3Small: Input shape (1, 3, 128, 128)
-Uses onnx-coreml package (dedicated ONNX converter)
-Fallback: coremltools with direct ONNX support
+Uses coremltools 8.3+ which supports ONNX IR v10
+Strategy: Optimize ONNX model with onnx-simplifier first
 """
 
 import os
@@ -11,17 +11,19 @@ import sys
 from pathlib import Path
 
 import onnx
+import coremltools as ct
+
 try:
-    from onnx_coreml import convert as onnx_coreml_convert
-    ONNX_COREML_AVAILABLE = True
+    from onnxsim import simplify
+    ONNX_SIMPLIFIER_AVAILABLE = True
 except ImportError:
-    ONNX_COREML_AVAILABLE = False
-    print("Warning: onnx-coreml not available, will try coremltools fallback")
+    ONNX_SIMPLIFIER_AVAILABLE = False
+    print("Warning: onnx-simplifier not available, skipping optimization")
 
 
 def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     """
-    Convert ONNX model to CoreML format using onnx-coreml.
+    Convert ONNX model to CoreML format using coremltools 8.3+
     
     Args:
         onnx_path: Path to the ONNX model file
@@ -30,10 +32,10 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     Returns:
         Path to the generated CoreML model
         
-    Strategy: Use onnx-coreml 1.3+ (specialized ONNX converter)
-    - Load model as Python object (NOT file path)
-    - Pass to convert() without 'source' parameter
-    - Supports ONNX IR v10 with MobileNetV3 HardSwish operators
+    Strategy:
+    1. Load and validate ONNX model (IR v10 support)
+    2. Optimize with onnx-simplifier (reduce complexity, improve conversion)
+    3. Convert directly with coremltools 8.3+ (native ONNX IR v10 support)
     """
     # Load ONNX model
     print(f"Loading ONNX model from: {onnx_path}")
@@ -41,8 +43,14 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
         raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
     
     onnx_model = onnx.load(onnx_path)
-    onnx.checker.check_model(onnx_model)  # Validate model structure
     print(f"✓ ONNX model loaded (IR version: {onnx_model.ir_version})")
+    
+    # Validate model structure
+    try:
+        onnx.checker.check_model(onnx_model)
+        print("✓ ONNX model validation passed")
+    except onnx.checker.ValidationError as e:
+        print(f"⚠ ONNX model validation warning: {e}")
     
     # Get model info
     producer_name = onnx_model.producer_name or "Unknown"
@@ -59,47 +67,40 @@ def export_onnx_to_coreml(onnx_path: str, output_dir: str = "output") -> str:
     except (IndexError, AttributeError) as e:
         print(f"Warning: Could not extract input info: {e}")
     
+    # Step 1: Optimize ONNX model with onnx-simplifier
+    print("\nOptimizing ONNX model...")
+    if ONNX_SIMPLIFIER_AVAILABLE:
+        try:
+            onnx_model, check_ok = simplify(onnx_model)
+            if check_ok:
+                print("✓ ONNX model optimized successfully")
+            else:
+                print("⚠ ONNX simplification succeeded but model check failed (continuing anyway)")
+        except Exception as e:
+            print(f"⚠ ONNX simplification failed: {e} (continuing without optimization)")
+    else:
+        print("⚠ onnx-simplifier not available, skipping optimization")
+    
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Convert to CoreML
-    ml_model = None
-    
-    # Method 1: Try onnx-coreml (preferred, specialized ONNX converter)
-    if ONNX_COREML_AVAILABLE:
-        print("Converting ONNX to CoreML using onnx-coreml...")
-        try:
-            ml_model = onnx_coreml_convert(
-                onnx_model,
-                # ✅ CORRECT: Pass model object, NOT file path
-                # ❌ DO NOT use source="pytorch" - causes error with ONNX objects
-            )
-            print("✓ Converted successfully with onnx-coreml")
-        except Exception as e:
-            print(f"✗ onnx-coreml conversion failed: {str(e)}")
-            print("Attempting fallback method...")
-            ml_model = None
-    
-    # Method 2: Fallback to coremltools with flexible_shape_ranges
-    if ml_model is None:
-        print("Converting ONNX to CoreML using coremltools...")
-        try:
-            import coremltools as ct
-            
-            # coremltools 7.x can handle ONNX files directly
-            ml_model = ct.converters.onnx.convert(
-                onnx_model,
-                minimum_ios_deployment_target="14"
-            )
-            print("✓ Converted successfully with coremltools fallback")
-        except Exception as e:
-            print(f"✗ coremltools conversion also failed: {str(e)}")
-            print("\nFinal troubleshooting:")
-            print("1. Check ONNX model validity: onnx.checker.check_model()")
-            print("2. Model may have unsupported operators for CoreML")
-            print("3. Consider optimizing ONNX model with onnx-simplifier")
-            print("4. Last resort: Export PyTorch model to .pt format first")
-            raise
+    # Step 2: Convert to CoreML using coremltools 8.3+
+    print("\nConverting ONNX to CoreML using coremltools 8.3+...")
+    try:
+        ml_model = ct.convert(
+            onnx_model,
+            convert_to="mlprogram",  # mlprogram = Neural Networks 5 (more modern)
+            minimum_ios_deployment_target="14"
+        )
+        print("✓ Converted successfully with coremltools")
+        
+    except Exception as e:
+        print(f"✗ Conversion failed: {str(e)}")
+        print("\nTroubleshooting:")
+        print("1. Model may contain unsupported operators")
+        print("2. Try 'neuralnetwork' format instead of 'mlprogram'")
+        print("3. Export PyTorch model to .pt and convert directly")
+        raise
     
     # Determine output filename
     model_name = Path(onnx_path).stem
