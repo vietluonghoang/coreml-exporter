@@ -122,27 +122,40 @@ def log_coreml_metadata(ml_model, input_name: str, output_name: str) -> None:
     model_type = type(ml_model).__name__
     print(f"Model type: {model_type}")
     
-    # Log inputs
-    if hasattr(ml_model, 'input_description'):
-        print(f"\nInputs:")
-        for inp in ml_model.input_description:
-            print(f"  - {inp.name}: {inp.type}")
+    try:
+        # Log inputs
+        if hasattr(ml_model, 'input_description'):
+            print(f"\nInputs:")
+            for inp in ml_model.input_description:
+                if hasattr(inp, 'name') and hasattr(inp, 'type'):
+                    print(f"  - {inp.name}: {inp.type}")
+                else:
+                    print(f"  - {inp}")
+        
+        # Log outputs
+        if hasattr(ml_model, 'output_description'):
+            print(f"\nOutputs:")
+            for out in ml_model.output_description:
+                if hasattr(out, 'name') and hasattr(out, 'type'):
+                    print(f"  - {out.name}: {out.type}")
+                else:
+                    print(f"  - {out}")
+        
+        # Log spec details
+        if hasattr(ml_model, 'spec'):
+            spec = ml_model.spec
+            try:
+                if spec.HasField('neuralNetwork'):
+                    print(f"\n⚠ WARNING: Model uses legacy neuralnetwork format")
+                    print(f"  ANE optimization is NOT available")
+                    print(f"  Consider updating conversion strategy for mlprogram format")
+                elif spec.HasField('mlProgram'):
+                    print(f"\n✓ Model uses mlprogram format (optimized)")
+            except Exception as spec_e:
+                print(f"⚠ Could not determine model format: {type(spec_e).__name__}")
     
-    # Log outputs
-    if hasattr(ml_model, 'output_description'):
-        print(f"\nOutputs:")
-        for out in ml_model.output_description:
-            print(f"  - {out.name}: {out.type}")
-    
-    # Log spec details
-    if hasattr(ml_model, 'spec'):
-        spec = ml_model.spec
-        if spec.HasField('neuralNetwork'):
-            print(f"\n⚠ WARNING: Model uses legacy neuralnetwork format")
-            print(f"  ANE optimization is NOT available")
-            print(f"  Consider updating conversion strategy for mlprogram format")
-        elif spec.HasField('mlProgram'):
-            print(f"\n✓ Model uses mlprogram format (optimized)")
+    except Exception as e:
+        print(f"⚠ Error logging metadata: {str(e)[:100]}")
     
     print("="*60)
 
@@ -278,6 +291,7 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
         ml_model = ct.convert(
             model,
             convert_to="mlprogram",
+            source="pytorch",
             inputs=[ct.TensorType(shape=example_input.shape, name="input")],
             outputs=[ct.TensorType(name="logits")]
         )
@@ -332,6 +346,7 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             ml_model = ct.convert(
                 model,
                 convert_to="neuralnetwork",
+                source="pytorch",
                 inputs=[ct.TensorType(shape=example_input.shape, name="input")],
                 outputs=[ct.TensorType(name="logits")]
             )
