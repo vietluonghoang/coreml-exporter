@@ -15,6 +15,138 @@ import torch.nn as nn
 import coremltools as ct
 
 
+def infer_num_classes_from_state_dict(state_dict: dict) -> int:
+    """
+    Infer number of classes from state_dict by examining classifier weights.
+    
+    Args:
+        state_dict: The model's state_dict
+        
+    Returns:
+        Number of classes (out_features of classifier layer)
+        
+    Raises:
+        ValueError: If classifier weights cannot be found
+    """
+    # Look for classifier weight tensors
+    classifier_patterns = [
+        'classifier.6.weight',  # MobileNetV3Small default
+        'classifier.weight',
+        'head.weight',
+        'fc.weight',
+    ]
+    
+    for pattern in classifier_patterns:
+        if pattern in state_dict:
+            weight_tensor = state_dict[pattern]
+            num_classes = weight_tensor.shape[0]
+            print(f"✓ Inferred num_classes={num_classes} from '{pattern}'")
+            return num_classes
+    
+    # Fallback: search for any layer ending with 'weight' in classifier section
+    for key in state_dict.keys():
+        if 'classifier' in key and 'weight' in key and not 'bias' in key:
+            weight_tensor = state_dict[key]
+            if weight_tensor.ndim >= 2:
+                num_classes = weight_tensor.shape[0]
+                print(f"✓ Inferred num_classes={num_classes} from '{key}'")
+                return num_classes
+    
+    # Last resort: check for any final dense layer
+    for key in sorted(state_dict.keys(), reverse=True):
+        if 'weight' in key:
+            weight_tensor = state_dict[key]
+            if weight_tensor.ndim >= 2 and weight_tensor.shape[0] > 10:
+                num_classes = weight_tensor.shape[0]
+                print(f"✓ Inferred num_classes={num_classes} from '{key}'")
+                return num_classes
+    
+    raise ValueError(
+        "Could not infer num_classes from state_dict. "
+        "Classifier weight layer not found. "
+        f"Available keys: {list(state_dict.keys())[:10]}"
+    )
+
+
+def validate_model_output(model: nn.Module, example_input: torch.Tensor) -> None:
+    """
+    Validate that model output has correct shape before conversion.
+    
+    Args:
+        model: PyTorch model
+        example_input: Example input tensor (batch_size, channels, height, width)
+        
+    Raises:
+        AssertionError: If output shape is invalid
+    """
+    print("Validating model output shape...")
+    with torch.no_grad():
+        output = model(example_input)
+    
+    assert output.ndim == 2, \
+        f"Expected output shape (batch_size, num_classes), got ndim={output.ndim}, shape={output.shape}"
+    
+    assert output.shape[0] == 1, \
+        f"Expected batch_size=1, got batch_size={output.shape[0]}"
+    
+    num_classes = output.shape[1]
+    print(f"✓ Output validation passed: shape={output.shape}, num_classes={num_classes}")
+
+
+def freeze_model(model: nn.Module) -> None:
+    """
+    Freeze model parameters for inference (eval mode + no gradients).
+    
+    Args:
+        model: PyTorch model to freeze
+    """
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad_(False)
+    print("✓ Model frozen (eval mode + requires_grad=False)")
+
+
+def log_coreml_metadata(ml_model, input_name: str, output_name: str) -> None:
+    """
+    Log CoreML model metadata for debugging.
+    
+    Args:
+        ml_model: Converted CoreML model
+        input_name: Input feature name
+        output_name: Output feature name
+    """
+    print("\n" + "="*60)
+    print("CoreML Model Metadata")
+    print("="*60)
+    
+    model_type = type(ml_model).__name__
+    print(f"Model type: {model_type}")
+    
+    # Log inputs
+    if hasattr(ml_model, 'input_description'):
+        print(f"\nInputs:")
+        for inp in ml_model.input_description:
+            print(f"  - {inp.name}: {inp.type}")
+    
+    # Log outputs
+    if hasattr(ml_model, 'output_description'):
+        print(f"\nOutputs:")
+        for out in ml_model.output_description:
+            print(f"  - {out.name}: {out.type}")
+    
+    # Log spec details
+    if hasattr(ml_model, 'spec'):
+        spec = ml_model.spec
+        if spec.HasField('neuralNetwork'):
+            print(f"\n⚠ WARNING: Model uses legacy neuralnetwork format")
+            print(f"  ANE optimization is NOT available")
+            print(f"  Consider updating conversion strategy for mlprogram format")
+        elif spec.HasField('mlProgram'):
+            print(f"\n✓ Model uses mlprogram format (optimized)")
+    
+    print("="*60)
+
+
 def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     """
     Convert PyTorch model to CoreML format.
@@ -60,6 +192,14 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     # If only state_dict available, rebuild MobileNetV3Small architecture
     if model is None and state_dict is not None:
         print("\nRebuilding MobileNetV3Small architecture from state_dict...")
+        
+        # MANDATORY: Infer num_classes from state_dict
+        try:
+            num_classes = infer_num_classes_from_state_dict(state_dict)
+        except ValueError as e:
+            print(f"✗ Failed to infer num_classes: {e}")
+            raise
+        
         try:
             from torchvision.models import mobilenet_v3_small
             
@@ -70,9 +210,9 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
                 # Remove 'backbone.' prefix to match MobileNetV3Small keys
                 state_dict = {k.replace('backbone.', ''): v for k, v in state_dict.items()}
             
-            # Create MobileNetV3Small with random initialization
-            model = mobilenet_v3_small(weights=None, num_classes=1000)  # Default num_classes
-            print("✓ Created MobileNetV3Small architecture")
+            # Create MobileNetV3Small with INFERRED num_classes
+            model = mobilenet_v3_small(weights=None, num_classes=num_classes)
+            print(f"✓ Created MobileNetV3Small architecture (num_classes={num_classes})")
             
             # Try to load full state_dict
             try:
@@ -89,7 +229,7 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
                 if backbone_dict:
                     model.features.load_state_dict(backbone_dict, strict=False)
                     print("✓ Loaded backbone weights (features) only")
-                    print("⚠ Note: Classifier head was custom, using default MobileNetV3Small classifier")
+                    print("⚠ Note: Classifier head was custom, using MobileNetV3Small classifier with inferred classes")
                 else:
                     print("✗ Could not find 'features' in state_dict")
                     raise e
@@ -111,19 +251,26 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             "  3. Dict with 'state_dict' key (will rebuild MobileNetV3Small)"
         )
     
-    # Ensure model is in eval mode
-    model.eval()
-    print(f"✓ Model ready for conversion")
+    # MANDATORY: Freeze model before conversion
+    freeze_model(model)
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create example input (MobileNetV3Small: 1, 3, 128, 128)
-    print("\nPreparing example input for model conversion...")
-    example_input = torch.randn(1, 3, 128, 128)
+    # RECOMMENDED: Allow INPUT_SIZE override via environment variable
+    input_size = int(os.getenv("INPUT_SIZE", "128"))
+    print(f"\nUsing input size: {input_size}×{input_size} (override via INPUT_SIZE env var)")
+    
+    # Create example input
+    print("Preparing example input for model conversion...")
+    example_input = torch.randn(1, 3, input_size, input_size)
     print(f"Example input shape: {example_input.shape}")
     
+    # MANDATORY: Validate output shape before conversion
+    validate_model_output(model, example_input)
+    
     ml_model = None
+    conversion_method = None
     
     # Method 1: Direct coremltools conversion (PyTorch 2.0+ native)
     print("\nMethod 1: Direct coremltools conversion...")
@@ -132,9 +279,10 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             model,
             convert_to="mlprogram",
             inputs=[ct.TensorType(shape=example_input.shape, name="input")],
-            outputs=[ct.TensorType(name="output")]
+            outputs=[ct.TensorType(name="logits")]
         )
         print("✓ Converted successfully with mlprogram format")
+        conversion_method = "mlprogram (direct)"
         
     except Exception as e:
         print(f"⚠ mlprogram conversion failed: {str(e)[:150]}")
@@ -149,9 +297,11 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             ml_model = ct.convert(
                 traced_model,
                 convert_to="mlprogram",
-                inputs=[ct.TensorType(shape=example_input.shape, name="input")]
+                inputs=[ct.TensorType(shape=example_input.shape, name="input")],
+                outputs=[ct.TensorType(name="logits")]
             )
             print("✓ Converted successfully with torch.jit.trace + mlprogram")
+            conversion_method = "mlprogram (jit.trace)"
             
         except Exception as e:
             print(f"⚠ torch.jit.trace + mlprogram failed: {str(e)[:150]}")
@@ -166,9 +316,11 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             ml_model = ct.convert(
                 traced_model,
                 convert_to="neuralnetwork",
-                inputs=[ct.TensorType(shape=example_input.shape, name="input")]
+                inputs=[ct.TensorType(shape=example_input.shape, name="input")],
+                outputs=[ct.TensorType(name="logits")]
             )
             print("✓ Converted successfully with torch.jit.trace + neuralnetwork")
+            conversion_method = "neuralnetwork (jit.trace)"
             
         except Exception as e:
             print(f"⚠ torch.jit.trace + neuralnetwork failed: {str(e)[:150]}")
@@ -180,13 +332,18 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
             ml_model = ct.convert(
                 model,
                 convert_to="neuralnetwork",
-                inputs=[ct.TensorType(shape=example_input.shape, name="input")]
+                inputs=[ct.TensorType(shape=example_input.shape, name="input")],
+                outputs=[ct.TensorType(name="logits")]
             )
             print("✓ Converted successfully with neuralnetwork format")
+            conversion_method = "neuralnetwork (direct)"
             
         except Exception as e:
             print(f"✗ All conversion methods failed: {str(e)[:150]}")
             raise
+    
+    # RECOMMENDED: Log CoreML metadata
+    log_coreml_metadata(ml_model, "input", "logits")
     
     # Save CoreML model as .mlpackage (directory format)
     model_name = Path(pt_path).stem
@@ -196,6 +353,7 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     ml_model.save(output_path)
     print(f"✓ CoreML model saved successfully")
     print(f"✓ Output: {output_path}")
+    print(f"✓ Conversion method: {conversion_method}")
     
     return output_path
 
