@@ -15,9 +15,31 @@ import torch.nn as nn
 import coremltools as ct
 
 
+def infer_num_classes_from_config(config: dict) -> int:
+    """
+    Extract num_classes from training config if available.
+    
+    Args:
+        config: Training configuration dict
+        
+    Returns:
+        Number of classes, or None if not found
+    """
+    if not isinstance(config, dict):
+        return None
+    
+    if 'num_classes' in config:
+        num_classes = config['num_classes']
+        print(f"✓ Found num_classes={num_classes} in checkpoint config")
+        return num_classes
+    
+    return None
+
+
 def infer_num_classes_from_state_dict(state_dict: dict) -> int:
     """
     Infer number of classes from state_dict by examining classifier weights.
+    Prioritizes the FINAL classifier layer (output layer) to avoid intermediate hidden layers.
     
     Args:
         state_dict: The model's state_dict
@@ -28,38 +50,46 @@ def infer_num_classes_from_state_dict(state_dict: dict) -> int:
     Raises:
         ValueError: If classifier weights cannot be found
     """
-    # Look for classifier weight tensors
-    classifier_patterns = [
-        'classifier.6.weight',  # MobileNetV3Small default
-        'classifier.weight',
-        'head.weight',
-        'fc.weight',
+    # Strategy 1: Look for final classifier patterns (most reliable)
+    final_classifier_patterns = [
+        ('classifier.6.weight', 'MobileNetV3Small default'),  # Last layer
+        ('head.weight', 'head layer'),
+        ('fc.weight', 'fc layer'),
     ]
     
-    for pattern in classifier_patterns:
+    for pattern, desc in final_classifier_patterns:
         if pattern in state_dict:
             weight_tensor = state_dict[pattern]
             num_classes = weight_tensor.shape[0]
-            print(f"✓ Inferred num_classes={num_classes} from '{pattern}'")
+            print(f"✓ Inferred num_classes={num_classes} from '{pattern}' ({desc})")
             return num_classes
     
-    # Fallback: search for any layer ending with 'weight' in classifier section
+    # Strategy 2: Search for classifier weights with custom backbone prefix
+    # Find ALL classifier weights and pick the one with smallest output (most likely final layer)
+    classifier_weights = {}
     for key in state_dict.keys():
-        if 'classifier' in key and 'weight' in key and not 'bias' in key:
+        if 'classifier' in key and key.endswith('.weight') and 'bias' not in key:
             weight_tensor = state_dict[key]
             if weight_tensor.ndim >= 2:
-                num_classes = weight_tensor.shape[0]
-                print(f"✓ Inferred num_classes={num_classes} from '{key}'")
-                return num_classes
+                out_features = weight_tensor.shape[0]
+                # Extract layer index from key if possible (e.g., 'classifier.4.weight' -> 4)
+                try:
+                    # Split by '.' and find numeric indices
+                    parts = key.split('.')
+                    indices = [int(p) for p in parts if p.isdigit()]
+                    layer_idx = indices[-1] if indices else float('inf')
+                except:
+                    layer_idx = float('inf')
+                
+                classifier_weights[key] = (out_features, layer_idx)
     
-    # Last resort: check for any final dense layer
-    for key in sorted(state_dict.keys(), reverse=True):
-        if 'weight' in key:
-            weight_tensor = state_dict[key]
-            if weight_tensor.ndim >= 2 and weight_tensor.shape[0] > 10:
-                num_classes = weight_tensor.shape[0]
-                print(f"✓ Inferred num_classes={num_classes} from '{key}'")
-                return num_classes
+    if classifier_weights:
+        # Sort by: first priority = layer index descending (later layers), second = out_features ascending
+        # (final output layers typically have fewer features than intermediate layers)
+        sorted_weights = sorted(classifier_weights.items(), key=lambda x: (-x[1][1], x[1][0]))
+        best_key, (num_classes, layer_idx) = sorted_weights[0]
+        print(f"✓ Inferred num_classes={num_classes} from '{best_key}' (layer_idx={layer_idx})")
+        return num_classes
     
     raise ValueError(
         "Could not infer num_classes from state_dict. "
@@ -181,14 +211,21 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     
     model = None
     state_dict = None
+    config = None
+    num_classes = None
     
-    # Extract model or state_dict from checkpoint
+    # Extract model, state_dict, and config from checkpoint
     if isinstance(loaded, nn.Module):
         model = loaded
         print("✓ Direct nn.Module loaded")
     
     elif isinstance(loaded, dict):
         print(f"Checkpoint keys: {list(loaded.keys())}")
+        
+        # Extract config if available
+        if 'config' in loaded:
+            config = loaded['config']
+            print(f"✓ Found training config")
         
         # Try to find model object
         if 'model' in loaded and isinstance(loaded['model'], nn.Module):
@@ -206,9 +243,15 @@ def convert_pytorch_to_coreml(pt_path: str, output_dir: str = "output") -> str:
     if model is None and state_dict is not None:
         print("\nRebuilding MobileNetV3Small architecture from state_dict...")
         
-        # MANDATORY: Infer num_classes from state_dict
+        # MANDATORY: Infer num_classes (try config first, then state_dict)
         try:
-            num_classes = infer_num_classes_from_state_dict(state_dict)
+            # Priority 1: Extract from config
+            if config is not None:
+                num_classes = infer_num_classes_from_config(config)
+            
+            # Priority 2: Infer from state_dict
+            if num_classes is None:
+                num_classes = infer_num_classes_from_state_dict(state_dict)
         except ValueError as e:
             print(f"✗ Failed to infer num_classes: {e}")
             raise
